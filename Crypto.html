@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Crypto Terminal X</title>
+
+<script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+
+<style>
+:root{
+  --bg:#0b0f14;
+  --glass:rgba(255,255,255,0.05);
+  --text:#e6edf3;
+  --rise:#16c784;
+  --fall:#ea3943;
+  --accent:#4da3ff;
+}
+
+body{
+  margin:0;
+  font-family:Arial;
+  background:linear-gradient(135deg,#0b0f14,#111827);
+  color:var(--text);
+  display:flex;
+  min-height: 100vh;
+  flex-direction: column;
+}
+
+/* Welcome Banner */
+#welcomeBanner{
+  text-align:center;
+  padding:15px;
+  font-size:24px;
+  font-weight:bold;
+  background:linear-gradient(90deg, #ff0000, #ff7f00, #ffff00, #00ff00, #0000ff, #4b0082, #8f00ff);
+  background-size: 400% 400%;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: rainbow 8s ease infinite;
+}
+
+@keyframes rainbow {
+  0%{background-position:0% 50%;}
+  50%{background-position:100% 50%;}
+  100%{background-position:0% 50%;}
+}
+
+/* Main layout */
+#container{
+  display:flex;
+  flex:1;
+}
+
+/* Sidebar */
+#sidebar{
+  width:260px;
+  padding:15px;
+  background:var(--glass);
+  backdrop-filter:blur(10px);
+  height:100%;
+  overflow:auto;
+}
+
+.coin{
+  padding:12px;
+  margin-bottom:10px;
+  border-radius:10px;
+  cursor:pointer;
+  background:var(--glass);
+}
+
+.coin:hover{
+  border:1px solid var(--accent);
+}
+
+/* Main */
+#main{
+  flex:1;
+  padding:20px;
+  min-width:0;
+}
+
+.card{
+  background:var(--glass);
+  padding:12px;
+  border-radius:10px;
+  margin-bottom:10px;
+}
+
+/* Chart */
+#chart{
+  height:400px;
+  width:100%;
+  margin-top:10px;
+}
+
+/* Controls */
+#controls button{
+  margin-right:5px;
+  padding:5px 10px;
+  background:#1f2937;
+  border:none;
+  color:white;
+  cursor:pointer;
+}
+
+/* Alert */
+#alertBox input, #portfolio input{
+  width:80px;
+}
+</style>
+</head>
+
+<body>
+
+<div id="welcomeBanner">Welcome to Crypto Terminal X</div>
+
+<div id="container">
+<div id="sidebar"></div>
+
+<div id="main">
+
+<div class="card">
+  <h2 id="title">Bitcoin</h2>
+  <div id="price">$0</div>
+  <div id="signal"></div>
+</div>
+
+<div id="controls" class="card">
+  Timeframe:
+  <button onclick="setDays(1)">24H</button>
+  <button onclick="setDays(7)">7D</button>
+  <button onclick="setDays(30)">30D</button>
+</div>
+
+<div id="chart"></div>
+
+<div class="card" id="prediction"></div>
+
+<div class="card" id="alertBox">
+  Alert Price: <input id="alertPrice" type="number">
+  <button onclick="setAlert()">Set</button>
+  <div id="alertStatus"></div>
+</div>
+
+<div class="card" id="portfolio">
+  Amount: <input id="amount" type="number" placeholder="Coins">
+  <button onclick="savePortfolio()">Save</button>
+  <div id="value"></div>
+</div>
+
+<div class="card" id="movers"></div>
+
+</div>
+</div>
+
+<script>
+window.onload = () => {
+let selectedCoin='bitcoin';
+let days=1;
+let chart,candleSeries;
+
+/* LOAD COINS */
+async function loadCoins(){
+  try{
+    const res = await fetch(`https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd`);
+    const data = await res.json();
+
+    const sidebar = document.getElementById('sidebar');
+    sidebar.innerHTML='';
+
+    data.slice(0,10).forEach(c=>{
+      const div=document.createElement('div');
+      div.className='coin';
+      div.innerHTML=`<b>${c.name}</b><br>$${c.current_price.toLocaleString()}`;
+      div.onclick=()=>{
+        selectedCoin=c.id;
+        document.getElementById('title').innerText=c.name;
+        loadChart();
+      };
+      sidebar.appendChild(div);
+    });
+
+    loadMovers(data);
+  }catch(e){
+    console.error("Error loading coins:", e);
+  }
+}
+
+/* MOVERS */
+function loadMovers(data){
+  const sorted=[...data].sort((a,b)=>b.price_change_percentage_24h-a.price_change_percentage_24h);
+  document.getElementById('movers').innerText=
+    `🚀 ${sorted[0].symbol.toUpperCase()} | 🔻 ${sorted[sorted.length-1].symbol.toUpperCase()}`;
+}
+
+/* CHART */
+async function loadChart(){
+  try{
+    const res = await fetch(`https://api.coingecko.com/api/v3/coins/${selectedCoin}/ohlc?vs_currency=usd&days=${days}`);
+    const data = await res.json();
+    if(!data.length) return;
+
+    const formatted=data.map(d=>({
+      time:d[0]/1000,
+      open:d[1],
+      high:d[2],
+      low:d[3],
+      close:d[4]
+    }));
+
+    const last=formatted[formatted.length-1].close;
+    document.getElementById('price').innerText='$'+last.toLocaleString();
+
+    document.getElementById('chart').innerHTML='';
+    chart=LightweightCharts.createChart(document.getElementById('chart'),{
+      layout:{background:{color:'#0b0f14'},textColor:'#e6edf3'},
+      rightPriceScale:{borderColor:'#555'},
+      timeScale:{borderColor:'#555'}
+    });
+
+    candleSeries=chart.addCandlestickSeries();
+    candleSeries.setData(formatted);
+
+    predict(formatted);
+    signal(formatted);
+    updatePortfolio(last);
+    checkAlert(last);
+  }catch(e){
+    console.error("Error loading chart:", e);
+  }
+}
+
+/* SIGNAL */
+function signal(data){
+  let closes=data.map(d=>d.close);
+  let avg=closes.slice(-5).reduce((a,b)=>a+b)/5;
+  let last=closes[closes.length-1];
+
+  let s="HOLD";
+  if(last>avg) s="BUY 📈";
+  if(last<avg) s="SELL 📉";
+
+  document.getElementById('signal').innerText="Signal: "+s;
+}
+
+/* PREDICTION ZONE */
+function predict(data){
+  let closes=data.map(d=>d.close);
+  let last=closes[closes.length-1];
+  let volatility=Math.max(...closes)-Math.min(...closes);
+
+  document.getElementById('prediction').innerText=
+    `Expected Range: $${(last-volatility*0.1).toFixed(2)} - $${(last+volatility*0.1).toFixed(2)}`;
+}
+
+/* ALERT */
+function setAlert(){
+  localStorage.setItem('alert',document.getElementById('alertPrice').value);
+  document.getElementById('alertStatus').innerText="Alert set ✅";
+}
+
+function checkAlert(price){
+  let alert=localStorage.getItem('alert');
+  if(alert && price>=alert){
+    document.getElementById('alertStatus').innerText="🚨 Alert Triggered!";
+  }
+}
+
+/* PORTFOLIO */
+function savePortfolio(){
+  localStorage.setItem('amount',document.getElementById('amount').value);
+}
+
+function updatePortfolio(price){
+  let amt=localStorage.getItem('amount')||0;
+  document.getElementById('value').innerText="Value: $"+(amt*price).toFixed(2);
+}
+
+/* TIMEFRAME */
+window.setDays=(d)=>{
+  days=d;
+  loadChart();
+}
+
+/* INIT */
+loadCoins();
+loadChart();
+setInterval(loadCoins,15000);
+setInterval(loadChart,30000); 
+}
+</script>
+
+</body>
+</html>
+
